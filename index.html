@@ -15,6 +15,32 @@
   <button id="stopAll" class="panic">STOP ALL AUDIO</button>
 </header>
 
+<footer id="player" class="glass">
+  <div class="jog" id="jog" title="Drag left / right to scrub"><div class="disc" id="disc"><i>♪</i></div></div>
+  <div class="mid">
+    <div class="now"><b id="tt">Nothing playing</b><small id="ts">Pick a song or a soundboard button</small></div>
+    <canvas id="viz" height="90"></canvas>
+    <div class="seekrow"><span id="tc">–:––</span><input type="range" id="seek" min="0" max="1000" value="0"><span id="td">–:––</span></div>
+    <div class="ctl">
+      <button id="shuf" title="Shuffle">🔀</button>
+      <button id="prev" title="Previous">⏮</button>
+      <button id="pp" class="big" title="Play / Pause">▶</button>
+      <button id="stop" title="Stop with fade out">⏹</button>
+      <button id="nxt" title="Next">⏭</button>
+      <button id="rep" title="Repeat">🔁 Off</button>
+      <button id="mute" title="Mute">🔊</button>
+      <input type="range" id="vol" min="0" max="1" step="0.01" title="Volume">
+      <button id="ytShow">📺 Show video</button>
+    </div>
+    <div class="ctl">
+      <button class="cue" data-k="0">Cue 1</button><button class="cue" data-k="1">Cue 2</button><button class="cue" data-k="2">Cue 3</button><button class="cue" data-k="3">Cue 4</button>
+      <label>Tempo <input type="range" id="tempo" min="0.8" max="1.2" step="0.01" value="1"> <span id="tv">100%</span></label>
+      <label>Fade <input type="number" id="fade" min="0" max="10" step="0.5"> sec</label>
+      <label class="chk"><input type="checkbox" id="xf"> Crossfade</label>
+    </div>
+  </div>
+</footer>
+
 <main>
   <section class="glass">
     <div class="bar">
@@ -41,25 +67,7 @@
   </section>
 </main>
 
-<footer id="player" class="glass">
-  <div class="now"><b id="tt">Nothing playing</b><small id="ts">Pick a song or a soundboard button</small></div>
-  <canvas id="viz" height="48"></canvas>
-  <div class="seekrow"><span id="tc">–:––</span><input type="range" id="seek" min="0" max="1000" value="0"><span id="td">–:––</span></div>
-  <div class="ctl">
-    <button id="shuf" title="Shuffle">🔀</button>
-    <button id="prev" title="Previous">⏮</button>
-    <button id="pp" class="big" title="Play / Pause">▶</button>
-    <button id="stop" title="Stop with fade out">⏹</button>
-    <button id="nxt" title="Next">⏭</button>
-    <button id="rep" title="Repeat">🔁 Off</button>
-    <button id="mute" title="Mute">🔊</button>
-    <input type="range" id="vol" min="0" max="1" step="0.01">
-    <label>Fade <input type="number" id="fade" min="0" max="10" step="0.5"> sec</label>
-    <label class="chk"><input type="checkbox" id="xf"> Crossfade</label>
-  </div>
-</footer>
-
-<div id="ytbox"><div id="yt"></div></div>
+<div id="ytbox"><div id="yth"><span>⠿ YouTube video – drag to move, pull corner to resize</span><button id="ytS">Size</button><button id="ytX">Hide</button></div><div id="yt"></div></div>
 <dialog id="dlg"></dialog>
 <div id="toast"></div>
 <script src="app.js"></script>

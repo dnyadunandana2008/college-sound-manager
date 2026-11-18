@@ -71,3 +71,24 @@ dialog .row{background:none;padding:0;margin-top:14px}
 
 @media(max-width:900px){main{grid-template-columns:1fr}#list{max-height:none}body{padding-bottom:300px}#ytbox{bottom:310px;width:170px}.hit{min-height:90px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* ---- DJ deck layout ---- */
+body{padding-bottom:24px}
+#player{position:static;margin:0 14px 14px;padding:14px;grid-template-columns:170px 1fr;gap:16px;align-items:center}
+.mid{display:grid;gap:8px;min-width:0}
+#viz{height:90px;background:#050a1c;border-radius:10px}
+.jog{width:160px;height:160px;border-radius:50%;padding:8px;background:conic-gradient(var(--cy),var(--pu),var(--bl),var(--cy));box-shadow:0 0 30px #22d3ee55;touch-action:none;cursor:grab;user-select:none}
+.disc{width:100%;height:100%;border-radius:50%;display:grid;place-items:center;background:repeating-radial-gradient(#0b1026 0 3px,#151c3d 4px 5px);position:relative}
+.disc::before{content:"";position:absolute;top:6px;left:50%;width:4px;height:34px;background:var(--cy);border-radius:2px;transform:translateX(-50%)}
+.disc i{font-style:normal;font-size:34px;width:62px;height:62px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,var(--pu),var(--bl))}
+.cue{min-width:70px;border-top:3px solid #ffffff22}
+.cue:nth-of-type(1).set{border-color:#f43f5e}.cue:nth-of-type(2).set{border-color:#f59e0b}.cue:nth-of-type(3).set{border-color:#10b981}.cue:nth-of-type(4).set{border-color:#3b82f6}
+.cue.set{background:#223268}
+#tempo{width:110px}
+#ytbox{display:none;flex-direction:column;top:70px;right:14px;bottom:auto;width:360px;height:240px;min-width:200px;min-height:130px;aspect-ratio:auto;resize:both;overflow:hidden;background:#000;box-shadow:0 10px 40px #000a;border:2px solid var(--cy)}
+#ytbox.on{display:flex}
+#yth{display:flex;gap:6px;align-items:center;background:#101a3a;padding:4px 6px;cursor:move;touch-action:none;font-size:12px;color:var(--mu)}
+#yth span{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#yth button{padding:2px 8px;font-size:12px}
+#yt{flex:1;width:100%;height:auto;min-height:0}
+@media(max-width:900px){#player{grid-template-columns:1fr}.jog{width:110px;height:110px;margin:auto}.disc i{width:44px;height:44px;font-size:22px}#ytbox{width:92vw;height:55vw;bottom:auto}}

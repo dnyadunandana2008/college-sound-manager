@@ -7,7 +7,7 @@ const COL=["#22d3ee","#3b82f6","#a855f7","#ec4899","#f59e0b","#10b981"];
 let S;
 try{S=JSON.parse(localStorage.csm)}catch(e){}
 S=S||{songs:[],board:DEF.map((d,i)=>({id:"b"+i,name:d[0],icon:d[1],color:COL[i%6],song:null})),vol:.8,fade:2,xf:true};
-let cur=null,ann=null,duck=1,mute=false,rep="off",shuf=false,loading=false,seq=0,drag=false,editMode=false;
+let rate=1,jogA=0,cur=null,ann=null,duck=1,mute=false,rep="off",shuf=false,loading=false,seq=0,drag=false,editMode=false;
 const live=new Set();
 const bc=new BroadcastChannel("csm");
 const save=()=>{localStorage.csm=JSON.stringify(S);bc.postMessage(1)};
@@ -32,6 +32,7 @@ window.onYouTubeIframeAPIReady=()=>{yt=new YT.Player("yt",{height:"100%",width:"
 {const t=document.createElement("script");t.src="https://www.youtube.com/iframe_api";document.head.append(t)}
 const ytId=u=>(String(u).match(/(?:v=|youtu\.be\/|embed\/|shorts\/|live\/)([\w-]{11})/)||[])[1];
 
+function peakOf(b,c){ctx=ctx||new AudioContext();b.arrayBuffer().then(a=>ctx.decodeAudioData(a)).then(f=>{const d=f.getChannelData(0),n=400,k=Math.floor(d.length/n),p=[];let m=0;for(let i=0;i<n;i++){let x=0;for(let j=0;j<k;j+=Math.max(1,k>>6))x=Math.max(x,Math.abs(d[i*k+j]));p.push(x);m=Math.max(m,x)}c.peaks=p.map(x=>x/(m||1))}).catch(()=>{})}
 /* ---------- playback ---------- */
 const list=()=>{const q=$("#q").value.toLowerCase(),c=$("#catF").value;return S.songs.filter(s=>(!q||s.title.toLowerCase().includes(q))&&(!c||s.cat===c))};
 
@@ -51,7 +52,7 @@ async function play(id){
       const b=await idb("get",id);if(my!==seq)return;
       if(!b)return toast("Audio file is not on this device. Upload it here again.");
       const url=URL.createObjectURL(b),el=new Audio(url);el.volume=0;graph(el);
-      const c={s,el,url};live.add(el);el.onended=()=>ended(c);
+      const c={s,el,url};el.playbackRate=rate;peakOf(b,c);live.add(el);el.onended=()=>ended(c);
       await el.play();if(my!==seq){kill(c,0);return}
       old&&kill(old,old.yt||!S.xf?0:S.fade);
       cur=c;$("#ytbox").classList.remove("on");fade(el,tv(),S.fade);
@@ -205,14 +206,44 @@ function frame(t){
   $("#tc").textContent=T(p);$("#td").textContent=T(d);
   if(!drag&&d)sk.value=p/d*1000;if(!cur)sk.value=0;
   g.clearRect(0,0,W,H);
-  const n=48,bw=W/n,data=new Uint8Array(64);
-  if(an&&cur&&!cur.yt)an.getByteFrequencyData(data);
-  const grad=g.createLinearGradient(0,0,W,0);grad.addColorStop(0,"#22d3ee");grad.addColorStop(1,"#a855f7");g.fillStyle=grad;
+  const pk=cur&&cur.peaks,n=pk?pk.length:80,bw=W/n,fr=d?p/d:0;
   for(let i=0;i<n;i++){
-    let h=data[i]/255*H;
-    if(cur&&cur.yt&&st==="Playing")h=(Math.sin(t/180+i*.6)*.5+.5)*H*.7;
-    h=Math.max(3,h);g.fillRect(i*bw+1,H-h,bw-2,h);
+    let h=pk?pk[i]*H:(cur&&cur.yt&&st==="Playing"?(Math.sin(t/180+i*.5)*.5+.5)*H*.7:4);
+    h=Math.max(2,h);g.fillStyle=pk?(i/n<fr?"#22d3ee":"#6b4fb3"):"#a855f7";
+    g.fillRect(i*bw+.5,(H-h)/2,Math.max(1,bw-1),h);
   }
+  const cu=cur&&cur.s.cues||[];
+  cu.forEach((q,k)=>{if(q!=null&&d){g.fillStyle=["#f43f5e","#f59e0b","#10b981","#3b82f6"][k];g.fillRect(q/d*W,0,3,H)}});
+  if(d){g.fillStyle="#fff";g.fillRect(fr*W,0,2,H)}
+  jogA+=st==="Playing"?1.6*rate:0;$("#disc").style.transform="rotate("+jogA+"deg)";
+  document.querySelectorAll(".cue").forEach((b,k)=>b.classList.toggle("set",cu[k]!=null));
   requestAnimationFrame(frame);
 }
 render();requestAnimationFrame(frame);
+
+/* ---------- DJ extras: cues, tempo, jog, movable video ---------- */
+const now=()=>cur?(cur.yt?yt.getCurrentTime():cur.el.currentTime):0;
+const goto=t=>cur&&(cur.yt?yt.seekTo(t,true):cur.el.currentTime=t);
+document.querySelectorAll(".cue").forEach(b=>{
+  b.onclick=()=>{if(!cur)return toast("Play a song first");const s=cur.s,k=+b.dataset.k;s.cues=s.cues||[null,null,null,null];
+    if(s.cues[k]==null){s.cues[k]=now();save();toast("Cue "+(k+1)+" saved")}else goto(s.cues[k])};
+  b.oncontextmenu=e=>{e.preventDefault();if(cur&&cur.s.cues){cur.s.cues[+b.dataset.k]=null;save();toast("Cue cleared")}};
+});
+$("#tempo").oninput=e=>{rate=+e.target.value;$("#tv").textContent=Math.round(rate*100)+"%";cur&&!cur.yt&&(cur.el.playbackRate=rate);cur&&cur.yt&&yt.setPlaybackRate&&yt.setPlaybackRate(rate)};
+$("#tempo").ondblclick=e=>{e.target.value=1;e.target.oninput(e)};
+let jx=null;const jog=$("#jog");
+jog.onpointerdown=e=>{jx=e.clientX;jog.setPointerCapture(e.pointerId)};
+jog.onpointermove=e=>{if(jx==null)return;const dx=e.clientX-jx;jx=e.clientX;jogA+=dx;goto(now()+dx*.05)};
+jog.onpointerup=()=>jx=null;
+/* YouTube window: drag, resize, size, hide, show */
+const yb=$("#ytbox");
+if(S.yp){yb.style.left=S.yp.l+"px";yb.style.top=S.yp.t+"px";yb.style.right="auto";yb.style.width=S.yp.w+"px";yb.style.height=S.yp.h+"px"}
+let dr=null;const yh=$("#yth");
+yh.onpointerdown=e=>{if(e.target.tagName==="BUTTON")return;const r=yb.getBoundingClientRect();dr={x:e.clientX-r.left,y:e.clientY-r.top};yh.setPointerCapture(e.pointerId)};
+yh.onpointermove=e=>{if(!dr)return;yb.style.right="auto";yb.style.left=Math.max(0,Math.min(innerWidth-100,e.clientX-dr.x))+"px";yb.style.top=Math.max(0,Math.min(innerHeight-60,e.clientY-dr.y))+"px"};
+const keep=()=>{const r=yb.getBoundingClientRect();S.yp={l:r.left,t:r.top,w:r.width,h:r.height};save()};
+yh.onpointerup=()=>{dr=null;keep()};
+new ResizeObserver(()=>{if(yb.classList.contains("on")){clearTimeout(yb._k);yb._k=setTimeout(keep,400)}}).observe(yb);
+$("#ytS").onclick=()=>{const w=yb.offsetWidth<300?420:yb.offsetWidth<500?640:240;yb.style.width=w+"px";yb.style.height=(w*9/16+28)+"px";keep()};
+$("#ytX").onclick=()=>yb.classList.remove("on");
+$("#ytShow").onclick=()=>cur&&cur.yt?yb.classList.add("on"):toast("No YouTube video is playing");
