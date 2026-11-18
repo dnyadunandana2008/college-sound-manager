@@ -1,96 +1,218 @@
-/* COLLEGE SOUND MANAGER
-   Configure SUPABASE_URL and SUPABASE_ANON_KEY below.
-   Do not put a Supabase service-role key in this file. */
-const SUPABASE_URL = "PASTE_YOUR_SUPABASE_PROJECT_URL_HERE";
-const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_PUBLIC_KEY_HERE";
-const BUCKET = "college-audio";
-const DEFAULT_BUTTONS = [
-  ["Welcome / Introduction","👋"],["Prayer Song","🙏"],["Lighting the Lamp","🪔"],["Guest Welcome","🌸"],
-  ["Principal Entry","🎓"],["Felicitation / Sanmana","🏅"],["Flower Welcome","💐"],["Chief Guest Speech","🎤"],
-  ["Prize Distribution","🏆"],["Cultural Programme","🎭"],["Background Music","🎼"],["Vote of Thanks","🙏"],
-  ["National Anthem","🇮🇳"],["Closing Music","🎵"]
-];
-let db=null, currentSongs=[], buttons=[], playlists=[], currentIndex=-1, activeYoutubeId=null, toastTimer=null;
-const audio=document.getElementById("audioPlayer");
-const $=id=>document.getElementById(id);
-const fmt=s=>{if(!Number.isFinite(s))return "0:00";let m=Math.floor(s/60),sec=Math.floor(s%60);return `${m}:${String(sec).padStart(2,"0")}`};
-function notify(msg){const t=$("toast");t.textContent=msg;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),2600)}
-function configured(){return !SUPABASE_URL.includes("PASTE_")&&!SUPABASE_ANON_KEY.includes("PASTE_")}
-function setConnection(ok,msg){$("connectionDot").classList.toggle("online",ok);$("connectionText").textContent=msg;$("syncText").textContent=ok?"Cloud synced":"Cloud not connected"}
-function escapeHtml(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-function showPage(name){document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));$("page-"+name)?.classList.add("active");document.querySelectorAll(".nav-item[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===name));$("pageTitle").textContent={dashboard:"Dashboard",library:"Music Library",soundboard:"Programme Soundboard",playlists:"Playlists"}[name]||"Dashboard"}
-function modal(html){$("modalContent").innerHTML=html;$("modalBackdrop").hidden=false}
-function closeModal(){$("modalBackdrop").hidden=true}
-function ytId(url){try{const u=new URL(url);if(u.hostname.includes("youtu.be"))return u.pathname.slice(1);if(u.hostname.includes("youtube.com"))return u.searchParams.get("v")||u.pathname.split("/").filter(Boolean).pop();}catch{}return null}
-async function init(){
-  if(!configured()){ $("loginScreen").hidden=false;$("appContent").hidden=true;$("loginError").textContent="First add your Supabase URL and anon key in app.js. Follow SETUP-GUIDE.txt.";return; }
-  db=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
-  const {data:{session}}=await db.auth.getSession();
-  if(session) await enterApp(); else {$("loginScreen").hidden=false;$("appContent").hidden=true;setConnection(false,"Signed out")}
-  db.auth.onAuthStateChange(async(_event,session)=>{if(session)await enterApp();else{$("loginScreen").hidden=false;$("appContent").hidden=true;setConnection(false,"Signed out")}});
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>"&#"+c.charCodeAt(0)+";");
+const T=s=>isFinite(s)&&s>0?Math.floor(s/60)+":"+String(Math.floor(s%60)).padStart(2,"0"):"–:––";
+const DEF=[["Welcome / Introduction","👋"],["Prayer Song","🙏"],["Lighting the Lamp","🪔"],["Guest Welcome","🎉"],["Principal Entry","🎓"],["Felicitation / Sanmana","🏅"],["Flower Welcome","💐"],["Chief Guest Speech","🎤"],["Prize Distribution","🏆"],["Cultural Programme","💃"],["Background Music","🎶"],["Vote of Thanks","🤝"],["National Anthem","🇮🇳"],["Closing Music","🔚"]];
+const COL=["#22d3ee","#3b82f6","#a855f7","#ec4899","#f59e0b","#10b981"];
+
+let S;
+try{S=JSON.parse(localStorage.csm)}catch(e){}
+S=S||{songs:[],board:DEF.map((d,i)=>({id:"b"+i,name:d[0],icon:d[1],color:COL[i%6],song:null})),vol:.8,fade:2,xf:true};
+let cur=null,ann=null,duck=1,mute=false,rep="off",shuf=false,loading=false,seq=0,drag=false,editMode=false;
+const live=new Set();
+const bc=new BroadcastChannel("csm");
+const save=()=>{localStorage.csm=JSON.stringify(S);bc.postMessage(1)};
+bc.onmessage=()=>{try{S=JSON.parse(localStorage.csm);render()}catch(e){}};
+const tv=()=>mute?0:S.vol*duck;
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("on");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("on"),2600)}
+
+/* ---------- storage for audio files (IndexedDB) ---------- */
+const db=new Promise(r=>{const q=indexedDB.open("csm",1);q.onupgradeneeded=()=>q.result.createObjectStore("a");q.onsuccess=()=>r(q.result)});
+const idb=async(m,k,v)=>{const d=await db;return new Promise(r=>{const o=d.transaction("a",m==="get"?"readonly":"readwrite").objectStore("a");const q=m==="get"?o.get(k):m==="put"?o.put(v,k):o.delete(k);q.onsuccess=()=>r(q.result)})};
+navigator.storage&&navigator.storage.persist&&navigator.storage.persist();
+
+/* ---------- audio helpers ---------- */
+let ctx,an;
+function graph(el){try{ctx=ctx||new AudioContext();if(!an){an=ctx.createAnalyser();an.fftSize=128;an.connect(ctx.destination)}ctx.createMediaElementSource(el).connect(an);ctx.resume()}catch(e){}}
+function fade(el,to,sec,done){clearInterval(el._f);const from=el.volume,n=Math.max(1,Math.round(sec*20));let i=0;el._f=setInterval(()=>{i++;el.volume=Math.min(1,Math.max(0,from+(to-from)*i/n));if(i>=n){clearInterval(el._f);done&&done()}},50)}
+
+/* YouTube (official embedded player) */
+let yt,ytRes;const ytReady=new Promise(r=>ytRes=r);
+const ytA={get volume(){return yt?yt.getVolume()/100:0},set volume(v){yt&&yt.setVolume(Math.round(v*100))}};
+window.onYouTubeIframeAPIReady=()=>{yt=new YT.Player("yt",{height:"100%",width:"100%",playerVars:{playsinline:1,rel:0},events:{onReady:()=>ytRes(),onStateChange:e=>{if(e.data===0&&cur&&cur.yt)ended(cur)}}})};
+{const t=document.createElement("script");t.src="https://www.youtube.com/iframe_api";document.head.append(t)}
+const ytId=u=>(String(u).match(/(?:v=|youtu\.be\/|embed\/|shorts\/|live\/)([\w-]{11})/)||[])[1];
+
+/* ---------- playback ---------- */
+const list=()=>{const q=$("#q").value.toLowerCase(),c=$("#catF").value;return S.songs.filter(s=>(!q||s.title.toLowerCase().includes(q))&&(!c||s.cat===c))};
+
+function kill(c,sec){const f=()=>{if(c.yt){yt.stopVideo()}else{c.el.pause();live.delete(c.el);URL.revokeObjectURL(c.url)}};sec>0?fade(c.el,0,sec,f):f()}
+
+async function play(id){
+  const s=S.songs.find(x=>x.id===id);if(!s)return toast("Song not found");
+  const my=++seq,old=cur;loading=true;
+  try{
+    if(s.type==="yt"){
+      if(!ytId(s.yt))return toast("This YouTube link is not valid");
+      toast("Loading YouTube…");await ytReady;if(my!==seq)return;
+      old&&kill(old,0);
+      cur={s,yt:true,el:ytA};$("#ytbox").classList.add("on");
+      ytA.volume=0;yt.loadVideoById(ytId(s.yt));fade(ytA,tv(),S.fade);
+    }else{
+      const b=await idb("get",id);if(my!==seq)return;
+      if(!b)return toast("Audio file is not on this device. Upload it here again.");
+      const url=URL.createObjectURL(b),el=new Audio(url);el.volume=0;graph(el);
+      const c={s,el,url};live.add(el);el.onended=()=>ended(c);
+      await el.play();if(my!==seq){kill(c,0);return}
+      old&&kill(old,old.yt||!S.xf?0:S.fade);
+      cur=c;$("#ytbox").classList.remove("on");fade(el,tv(),S.fade);
+    }
+  }catch(e){toast("Could not play this item")}
+  finally{if(my===seq)loading=false;render()}
 }
-async function enterApp(){
-  $("loginScreen").hidden=true;$("appContent").hidden=false;
-  setConnection(true,"Connected");
-  await ensureDefaultButtons();
-  await refreshAll();
-  db.channel("college-sound-live").on("postgres_changes",{event:"*",schema:"public",table:"songs"},()=>loadSongs()).on("postgres_changes",{event:"*",schema:"public",table:"soundboard_buttons"},()=>loadButtons()).on("postgres_changes",{event:"*",schema:"public",table:"playlists"},()=>loadPlaylists()).subscribe();
+function stop(sec=S.fade){if(!cur)return;const c=cur;cur=null;seq++;kill(c,sec);if(c.yt)setTimeout(()=>$("#ytbox").classList.remove("on"),sec*1000);render()}
+function stopAll(){
+  seq++;loading=false;cur=null;
+  live.forEach(e=>{clearInterval(e._f);e.pause()});live.clear();
+  yt&&yt.stopVideo&&yt.stopVideo();clearInterval(ytA._f);
+  ann=null;duck=1;$("#ytbox").classList.remove("on");render();toast("All audio stopped");
 }
-async function ensureDefaultButtons(){
-  const {data,error}=await db.from("soundboard_buttons").select("id").limit(1);
-  if(error){notify("Database setup issue: "+error.message);return}
-  if(!data.length){const rows=DEFAULT_BUTTONS.map((b,i)=>({title:b[0],icon:b[1],song_id:null,position:i,color:["#173b56","#2b315c","#3e2d5a","#174a4d"][i%4]}));const r=await db.from("soundboard_buttons").insert(rows);if(r.error)notify(r.error.message)}
+function ended(c){
+  if(c!==cur)return;
+  if(rep==="one"){play(c.s.id)}else next(true);
 }
-async function refreshAll(){await Promise.all([loadSongs(),loadButtons(),loadPlaylists()]);renderDashboard()}
-async function loadSongs(){const {data,error}=await db.from("songs").select("*").order("created_at",{ascending:false});if(error){notify("Could not load songs: "+error.message);return}currentSongs=data||[];renderLibrary();renderDashboard()}
-async function loadButtons(){const {data,error}=await db.from("soundboard_buttons").select("*").order("position");if(error){notify(error.message);return}buttons=data||[];renderSoundboards();$("buttonCount").textContent=buttons.length}
-async function loadPlaylists(){const {data,error}=await db.from("playlists").select("*").order("created_at",{ascending:false});if(error){notify(error.message);return}playlists=data||[];renderPlaylists();$("playlistCount").textContent=playlists.length}
-function songTitle(s){return s?.title||"Untitled track"}
-function songById(id){return currentSongs.find(s=>s.id===id)}
-function songRow(s){return `<div class="song-row"><div class="song-cover">${s.source_type==="youtube"?"▶":"♫"}</div><div class="song-info"><strong>${escapeHtml(songTitle(s))}</strong><small>${escapeHtml(s.category||"Other")} · ${s.source_type==="youtube"?"YouTube link":escapeHtml(s.file_type||"Audio file")} · ${s.duration_seconds?fmt(s.duration_seconds):"Duration unknown"}</small></div><div class="song-actions"><button class="icon-btn" onclick="playSong('${s.id}')">▶</button><button class="icon-btn" onclick="editSong('${s.id}')">✎</button><button class="icon-btn" onclick="deleteSong('${s.id}')">×</button></div></div>`}
-function renderLibrary(){const q=$("searchInput").value.toLowerCase(),cat=$("categoryFilter").value;const list=currentSongs.filter(s=>(songTitle(s).toLowerCase().includes(q))&&(!cat||s.category===cat));$("libraryList").innerHTML=list.length?list.map(songRow).join(""):'<div class="note">No tracks found. Upload audio or add a YouTube link.</div>'; }
-function renderDashboard(){$("trackCount").textContent=currentSongs.length;$("recentSongs").innerHTML=currentSongs.slice(0,5).map(songRow).join("")||'<div class="note">Your uploaded tracks will appear here.</div>';$("dashboardSoundboard").innerHTML=buttons.slice(0,8).map(soundButton).join("")}
-function soundButton(b){const s=songById(b.song_id);return `<button class="sound-button" style="border-color:${escapeHtml(b.color||"#263650")}" onclick="triggerButton('${b.id}')"><button class="sound-edit" onclick="event.stopPropagation();editButton('${b.id}')">✎</button><div class="sound-icon">${escapeHtml(b.icon||"♫")}</div><strong>${escapeHtml(b.title)}</strong><small>${s?escapeHtml(songTitle(s)):"No track assigned"}</small></button>`}
-function renderSoundboards(){$("soundboardGrid").innerHTML=buttons.map(soundButton).join("")||'<div class="note">No soundboard buttons yet.</div>'}
-function renderPlaylists(){$("playlistList").innerHTML=playlists.map(p=>`<div class="playlist-card"><div class="sound-icon">☷</div><h3>${escapeHtml(p.name)}</h3><p>${escapeHtml(p.description||"College event playlist")}</p><button class="ghost" onclick="openPlaylist('${p.id}')">Open playlist</button> <button class="ghost" onclick="deletePlaylist('${p.id}')">Delete</button></div>`).join("")||'<div class="note">Create a playlist for your next event.</div>'}
-async function uploadFiles(files){for(const file of files){if(!file.type.startsWith("audio/")&&!/\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name)){notify("Skipped unsupported file: "+file.name);continue}const path=`${Date.now()}-${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;notify("Uploading "+file.name+"…");const up=await db.storage.from(BUCKET).upload(path,file,{contentType:file.type||"audio/mpeg",upsert:false});if(up.error){notify("Upload failed: "+up.error.message);continue}const ins=await db.from("songs").insert({title:file.name.replace(/\.[^.]+$/,""),category:"Other",source_type:"upload",storage_path:path,file_type:file.type||file.name.split(".").pop(),file_size:file.size}).select().single();if(ins.error){await db.storage.from(BUCKET).remove([path]);notify("Save failed: "+ins.error.message)}}await loadSongs();notify("Upload complete. Available on your signed-in devices.")}
-async function addYoutube(){modal(`<h2>Add YouTube track</h2><label>Song title</label><input id="ytTitle" placeholder="e.g. College welcome song"><label>YouTube URL</label><input id="ytUrl" placeholder="https://www.youtube.com/watch?v=..."><label>Category</label><select id="ytCategory"><option>Other</option><option>Welcome</option><option>Prayer</option><option>Background</option><option>National</option><option>Cultural</option></select><button class="primary" onclick="saveYoutube()">Save YouTube link</button>`)}
-async function saveYoutube(){const title=$("ytTitle").value.trim(),url=$("ytUrl").value.trim(),id=ytId(url);if(!title||!id){notify("Enter a title and valid YouTube URL.");return}const {error}=await db.from("songs").insert({title,category:$("ytCategory").value,source_type:"youtube",youtube_id:id,youtube_url:url});if(error){notify(error.message);return}closeModal();await loadSongs();notify("YouTube link saved.")}
-async function editSong(id){const s=songById(id);if(!s)return;modal(`<h2>Edit track</h2><label>Title</label><input id="editTitle" value="${escapeHtml(s.title)}"><label>Category</label><select id="editCategory">${["Other","Welcome","Prayer","Background","National","Cultural"].map(c=>`<option ${s.category===c?"selected":""}>${c}</option>`).join("")}</select><button class="primary" onclick="saveSongEdit('${id}')">Save changes</button>`)}
-async function saveSongEdit(id){const {error}=await db.from("songs").update({title:$("editTitle").value.trim(),category:$("editCategory").value}).eq("id",id);if(error){notify(error.message);return}closeModal();await loadSongs()}
-async function deleteSong(id){const s=songById(id);if(!s||!confirm(`Delete "${songTitle(s)}" from the shared library?`))return;if(s.storage_path)await db.storage.from(BUCKET).remove([s.storage_path]);const {error}=await db.from("songs").delete().eq("id",id);if(error){notify(error.message);return}await loadSongs();await loadButtons();notify("Track deleted")}
-async function getPlayableUrl(s){if(s.source_type==="youtube")return null;const {data,error}=await db.storage.from(BUCKET).createSignedUrl(s.storage_path,3600);if(error)throw error;return data.signedUrl}
-async function playSong(id){const index=currentSongs.findIndex(s=>s.id===id);if(index<0)return;currentIndex=index;const s=currentSongs[index];stopYoutube();audio.pause();audio.removeAttribute("src");if(s.source_type==="youtube"){activeYoutubeId=s.youtube_id;playYoutube(s);setNow(s.title,"YouTube embedded player");return}try{const url=await getPlayableUrl(s);audio.src=url;audio.volume=Number($("volumeBar").value)/100;await audio.play();setNow(s.title,s.category||"Cloud audio");$("playBtn").textContent="Ⅱ"}catch(e){notify("Cannot play track: "+e.message)}}
-function setNow(title,sub){$("nowTitle").textContent=title;$("nowSub").textContent=sub}
-function playYoutube(s){$("youtubeHost").innerHTML=`<iframe id="ytFrame" width="1" height="1" src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(s.youtube_id)}?autoplay=1&enablejsapi=1&playsinline=1" title="YouTube player" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;$("playBtn").textContent="Ⅱ"}
-function stopYoutube(){$("youtubeHost").innerHTML="";activeYoutubeId=null}
-function stopAll(){audio.pause();audio.currentTime=0;audio.removeAttribute("src");stopYoutube();$("playBtn").textContent="▶";$("seekBar").value=0;$("currentTime").textContent="0:00";setNow("Nothing playing","Choose a track from your library")}
-function togglePlay(){if(activeYoutubeId){const f=document.getElementById("ytFrame");if(f){notify("Use the YouTube player controls to pause or resume this video.");}return}if(!audio.src){if(currentSongs.length)playSong(currentSongs[0].id);return}if(audio.paused){audio.play();$("playBtn").textContent="Ⅱ"}else{audio.pause();$("playBtn").textContent="▶"}}
-function nextTrack(){if(!currentSongs.length)return;playSong(currentSongs[(currentIndex+1)%currentSongs.length].id)}
-function previousTrack(){if(audio.currentTime>3){audio.currentTime=0;return}if(!currentSongs.length)return;playSong(currentSongs[(currentIndex-1+currentSongs.length)%currentSongs.length].id)}
-async function triggerButton(id){const b=buttons.find(x=>x.id===id);if(!b)return;if(!b.song_id){editButton(id);notify("Assign a track to this button first.");return}await playSong(b.song_id)}
-function editButton(id){const b=buttons.find(x=>x.id===id);if(!b)return;modal(`<h2>Edit soundboard button</h2><label>Button name</label><input id="bTitle" value="${escapeHtml(b.title)}"><label>Icon (emoji)</label><input id="bIcon" value="${escapeHtml(b.icon||"♫")}"><label>Assigned track</label><select id="bSong"><option value="">No track assigned</option>${currentSongs.map(s=>`<option value="${s.id}" ${s.id===b.song_id?"selected":""}>${escapeHtml(s.title)}</option>`).join("")}</select><label>Button colour</label><input id="bColor" type="color" value="${b.color||"#173b56"}"><button class="primary" onclick="saveButton('${id}')">Save button</button> <button class="ghost" onclick="removeButton('${id}')">Delete</button>`)}
-async function saveButton(id){const {error}=await db.from("soundboard_buttons").update({title:$("bTitle").value.trim(),icon:$("bIcon").value.trim()||"♫",song_id:$("bSong").value||null,color:$("bColor").value}).eq("id",id);if(error){notify(error.message);return}closeModal();await loadButtons()}
-async function removeButton(id){if(!confirm("Delete this soundboard button?"))return;const {error}=await db.from("soundboard_buttons").delete().eq("id",id);if(error){notify(error.message);return}closeModal();await loadButtons()}
-async function addButton(){const pos=buttons.length;const {error}=await db.from("soundboard_buttons").insert({title:"New programme cue",icon:"♫",position:pos,color:"#173b56"});if(error){notify(error.message);return}await loadButtons();const b=buttons[buttons.length-1];if(b)editButton(b.id)}
-async function createPlaylist(){modal(`<h2>Create playlist</h2><label>Playlist name</label><input id="plName" placeholder="Annual Day 2026"><label>Description</label><input id="plDesc" placeholder="Music running order"><button class="primary" onclick="savePlaylist()">Create playlist</button>`)}
-async function savePlaylist(){const name=$("plName").value.trim();if(!name){notify("Enter a playlist name");return}const {error}=await db.from("playlists").insert({name,description:$("plDesc").value.trim()});if(error){notify(error.message);return}closeModal();await loadPlaylists()}
-async function deletePlaylist(id){if(!confirm("Delete this playlist?"))return;const {error}=await db.from("playlists").delete().eq("id",id);if(error)notify(error.message);else loadPlaylists()}
-async function openPlaylist(id){const p=playlists.find(x=>x.id===id);if(!p)return;modal(`<h2>${escapeHtml(p.name)}</h2><p class="note">Playlist creation and naming are available in this version. Use the library play controls to run tracks. Track ordering inside playlists is planned for the next version.</p><button class="primary" onclick="closeModal()">Close</button>`)}
-function fadeOutStop(){if(activeYoutubeId){stopAll();return}if(!audio.src){stopAll();return}const start=audio.volume,steps=20;let i=0;const timer=setInterval(()=>{i++;audio.volume=Math.max(0,start*(1-i/steps));if(i>=steps){clearInterval(timer);stopAll();audio.volume=Number($("volumeBar").value)/100}},50)}
-$("loginBtn").addEventListener("click",async()=>{if(!db){notify("Configure Supabase first");return}const {error}=await db.auth.signInWithPassword({email:$("emailInput").value.trim(),password:$("passwordInput").value});$("loginError").textContent=error?error.message:""});
-$("signOutBtn").addEventListener("click",async()=>{await db.auth.signOut()});
-$("fileInput").addEventListener("change",e=>{if(e.target.files.length)uploadFiles([...e.target.files]);e.target.value=""});
-$("searchInput").addEventListener("input",renderLibrary);$("categoryFilter").addEventListener("change",renderLibrary);
-$("addYoutubeBtn").addEventListener("click",addYoutube);$("addButtonBtn").addEventListener("click",addButton);$("createPlaylistBtn").addEventListener("click",createPlaylist);
-$("modalClose").addEventListener("click",closeModal);$("modalBackdrop").addEventListener("click",e=>{if(e.target===$("modalBackdrop"))closeModal()});
-document.querySelectorAll("[data-page]").forEach(b=>b.addEventListener("click",()=>showPage(b.dataset.page)));
-document.querySelectorAll("[data-goto]").forEach(b=>b.addEventListener("click",()=>showPage(b.dataset.goto)));
-$("playBtn").addEventListener("click",togglePlay);$("stopBtn").addEventListener("click",stopAll);$("stopAllBtn").addEventListener("click",stopAll);$("nextBtn").addEventListener("click",nextTrack);$("prevBtn").addEventListener("click",previousTrack);
-$("muteBtn").addEventListener("click",()=>{audio.muted=!audio.muted;$("muteBtn").textContent=audio.muted?"MUTED":"◖))"});
-$("volumeBar").addEventListener("input",e=>{audio.volume=Number(e.target.value)/100;audio.muted=false});
-$("seekBar").addEventListener("input",e=>{if(audio.duration)audio.currentTime=audio.duration*(Number(e.target.value)/1000)});
-audio.addEventListener("timeupdate",()=>{if(audio.duration){$("seekBar").value=audio.currentTime/audio.duration*1000;$("currentTime").textContent=fmt(audio.currentTime);$("duration").textContent=fmt(audio.duration)}});
-audio.addEventListener("play",()=>$("playBtn").textContent="Ⅱ");audio.addEventListener("pause",()=>$("playBtn").textContent="▶");audio.addEventListener("ended",nextTrack);
-document.addEventListener("keydown",e=>{if(["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName))return;if(e.code==="Space"){e.preventDefault();togglePlay()}if(e.key.toLowerCase()==="s")stopAll();if(e.key==="ArrowRight"&&audio.duration)audio.currentTime=Math.min(audio.duration,audio.currentTime+5);if(e.key==="ArrowLeft"&&audio.duration)audio.currentTime=Math.max(0,audio.currentTime-5)});
-init();
+function next(auto,dir=1){
+  const l=list();if(!l.length)return;
+  let i=cur?l.findIndex(x=>x.id===cur.s.id):-1;
+  if(shuf&&l.length>1){let n;do{n=Math.floor(Math.random()*l.length)}while(n===i);i=n}
+  else{i+=dir;if(i>=l.length||i<0){if(rep==="all"||!auto)i=(i+l.length)%l.length;else return stop(0)}}
+  play(l[i].id);
+}
+function toggle(){
+  if(!cur)return list().length?play(list()[0].id):toast("Add a song first");
+  if(cur.yt){yt.getPlayerState()===1?yt.pauseVideo():yt.playVideo()}
+  else if(cur.el.paused){cur.el.play();fade(cur.el,tv(),.3)}else cur.el.pause();
+}
+async function announce(id){
+  const s=S.songs.find(x=>x.id===id);if(!s)return;
+  if(s.type==="yt")return toast("Announcements must be uploaded audio files");
+  const b=await idb("get",id);if(!b)return toast("Audio file is not on this device");
+  if(ann){ann.pause();live.delete(ann)}
+  duck=.25;cur&&fade(cur.el,tv(),.4);
+  const el=new Audio(URL.createObjectURL(b));el.volume=mute?0:S.vol;live.add(el);ann=el;
+  el.onended=()=>{live.delete(el);if(ann===el){ann=null;duck=1;cur&&fade(cur.el,tv(),1)}};
+  el.play();toast("Announcement playing – music lowered");
+}
+
+/* ---------- library actions ---------- */
+const meta=f=>new Promise(r=>{const a=new Audio(URL.createObjectURL(f));a.onloadedmetadata=()=>{URL.revokeObjectURL(a.src);r(a.duration)};a.onerror=()=>r(0)});
+$("#files").onchange=async e=>{
+  for(const f of e.target.files){
+    const id="s"+Date.now()+Math.random().toString(36).slice(2,6);
+    await idb("put",id,f);
+    S.songs.push({id,title:f.name.replace(/\.[^.]+$/,""),cat:"General",type:"file",ext:(f.name.split(".").pop()||"audio").toUpperCase(),dur:await meta(f)});
+  }
+  save();render();toast("Songs added");e.target.value="";
+};
+$("#ytAdd").onclick=()=>{
+  const u=$("#ytUrl").value.trim();if(!ytId(u))return toast("Paste a full YouTube link");
+  S.songs.push({id:"s"+Date.now(),title:$("#ytTitle").value.trim()||"YouTube "+ytId(u),cat:"YouTube",type:"yt",ext:"YouTube",yt:u,dur:0});
+  $("#ytUrl").value=$("#ytTitle").value="";save();render();
+};
+function ask(title,fields){return new Promise(res=>{
+  const d=$("#dlg");
+  d.innerHTML=`<form method="dialog"><h3>${title}</h3>${fields.map(f=>`<label>${f.l}${f.o?`<select name="${f.k}">${f.o.map(o=>`<option value="${esc(o[0])}" ${o[0]==f.v?"selected":""}>${esc(o[1])}</option>`).join("")}</select>`:`<input name="${f.k}" value="${esc(f.v)}" ${f.t?`type="${f.t}"`:""} ${f.dl?`list="${f.dl}"`:""}>`}</label>`).join("")}<datalist id="cats">${cats().map(c=>`<option value="${esc(c)}">`).join("")}</datalist><div class="row"><button value="ok">Save</button><button value="x" class="ghost">Cancel</button></div></form>`;
+  d.onclose=()=>res(d.returnValue==="ok"?Object.fromEntries(new FormData(d.querySelector("form"))):null);
+  d.returnValue="";d.showModal();
+})}
+const cats=()=>[...new Set(S.songs.map(s=>s.cat))].sort();
+async function editSong(id){
+  const s=S.songs.find(x=>x.id===id),r=await ask("Edit song",[{k:"title",l:"Title",v:s.title},{k:"cat",l:"Category",v:s.cat,dl:"cats"}]);
+  if(r){s.title=r.title||s.title;s.cat=r.cat||"General";save();render()}
+}
+async function delSong(id){
+  if(!confirm("Delete this song?"))return;
+  if(cur&&cur.s.id===id)stop(0);
+  await idb("del",id);S.songs=S.songs.filter(s=>s.id!==id);S.board.forEach(b=>{if(b.song===id)b.song=null});save();render();
+}
+async function editBtn(b){
+  const r=await ask("Edit button",[
+    {k:"name",l:"Button name",v:b.name},{k:"icon",l:"Icon (any emoji)",v:b.icon},{k:"color",l:"Colour",v:b.color,t:"color"},
+    {k:"song",l:"Assign song",v:b.song||"",o:[["","— none —"],...S.songs.map(s=>[s.id,s.title])]},
+    {k:"link",l:"Or paste a YouTube link",v:""}]);
+  if(!r)return;
+  b.name=r.name||b.name;b.icon=r.icon||"🎵";b.color=r.color;b.song=r.song||null;
+  if(r.link){if(ytId(r.link)){const id="s"+Date.now();S.songs.push({id,title:b.name,cat:"Soundboard",type:"yt",ext:"YouTube",yt:r.link,dur:0});b.song=id}else toast("YouTube link not valid")}
+  save();render();
+}
+
+/* ---------- drawing the screen ---------- */
+function render(){
+  const cs=cats(),cf=$("#catF"),v=cf.value;
+  cf.innerHTML='<option value="">All categories</option>'+cs.map(c=>`<option ${c===v?"selected":""}>${esc(c)}</option>`).join("");
+  const pid=cur&&cur.s.id;
+  $("#board").innerHTML=S.board.map(b=>{const s=S.songs.find(x=>x.id===b.song);return `<div class="tile ${pid&&pid===b.song?"on":""}" style="--c:${esc(b.color)}" data-id="${b.id}"><button class="hit" data-a="go"><i>${esc(b.icon)}</i><span>${esc(b.name)}</span><small>${s?esc(s.title):"No audio assigned"}</small></button>${editMode?`<div class="tools"><button data-a="l">◀</button><button data-a="e">✎</button><button data-a="r">▶</button><button data-a="x">✕</button></div>`:""}</div>`}).join("");
+  const l=list();
+  $("#list").innerHTML=l.length?l.map(s=>`<div class="row ${pid===s.id?"on":""}" data-id="${s.id}"><div class="t"><b>${esc(s.title)}</b><small>${esc(s.cat)} · ${s.ext} · ${T(s.dur)}</small></div><button data-a="play" title="Play">▶</button><button data-a="ann" title="Play as announcement">📢</button><button data-a="edit" title="Edit">✎</button><button data-a="del" title="Delete">✕</button></div>`).join(""):'<div class="empty">No songs yet. Upload audio files or add a YouTube link.</div>';
+}
+$("#board").onclick=e=>{
+  const a=e.target.closest("[data-a]"),t=e.target.closest(".tile");if(!a||!t)return;
+  const i=S.board.findIndex(b=>b.id===t.dataset.id),b=S.board[i],k=a.dataset.a;
+  if(k==="go")return b.song?play(b.song):toast("No audio yet. Turn on Edit board and press ✎");
+  if(k==="e")return editBtn(b);
+  if(k==="x"){if(confirm("Remove this button?")){S.board.splice(i,1);save();render()}return}
+  const j=k==="l"?i-1:i+1;if(j<0||j>=S.board.length)return;
+  [S.board[i],S.board[j]]=[S.board[j],S.board[i]];save();render();
+};
+$("#list").onclick=e=>{
+  const a=e.target.closest("[data-a]"),r=e.target.closest(".row");if(!a||!r)return;
+  ({play,ann:announce,edit:editSong,del:delSong})[a.dataset.a](r.dataset.id);
+};
+$("#editToggle").onchange=e=>{editMode=e.target.checked;render()};
+$("#addBtn").onclick=()=>{const b={id:"b"+Date.now(),name:"New button",icon:"🎵",color:COL[S.board.length%6],song:null};S.board.push(b);save();render();editBtn(b)};
+$("#q").oninput=render;$("#catF").onchange=render;
+
+/* ---------- player controls ---------- */
+$("#pp").onclick=toggle;$("#stop").onclick=()=>stop();$("#stopAll").onclick=stopAll;
+$("#nxt").onclick=()=>next(false,1);$("#prev").onclick=()=>next(false,-1);
+$("#shuf").onclick=()=>{shuf=!shuf;$("#shuf").classList.toggle("on",shuf)};
+$("#rep").onclick=()=>{rep={off:"all",all:"one",one:"off"}[rep];$("#rep").textContent="🔁 "+{off:"Off",all:"All",one:"One"}[rep];$("#rep").classList.toggle("on",rep!=="off")};
+$("#mute").onclick=()=>{mute=!mute;$("#mute").textContent=mute?"🔇":"🔊";cur&&(cur.el.volume=tv())};
+$("#vol").value=S.vol;$("#vol").oninput=e=>{S.vol=+e.target.value;cur&&(cur.el.volume=tv());save()};
+$("#fade").value=S.fade;$("#fade").onchange=e=>{S.fade=Math.max(0,+e.target.value||0);save()};
+$("#xf").checked=S.xf;$("#xf").onchange=e=>{S.xf=e.target.checked;save()};
+const sk=$("#seek");
+sk.onpointerdown=()=>drag=true;
+sk.onpointerup=()=>drag=false;
+sk.oninput=()=>{if(!cur)return;const d=cur.yt?yt.getDuration():cur.el.duration;if(!d)return;const t=sk.value/1000*d;cur.yt?yt.seekTo(t,true):cur.el.currentTime=t};
+document.onkeydown=e=>{
+  if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)&&e.target.type!=="range"&&e.target.type!=="checkbox")return;
+  const k=e.key;
+  if(k===" "){e.preventDefault();toggle()}
+  else if(k==="Escape")stopAll();
+  else if(k==="n"||k==="N")next(false,1);
+  else if(k==="p"||k==="P")next(false,-1);
+  else if(k==="m"||k==="M")$("#mute").click();
+  else if(k==="ArrowRight"&&cur&&!cur.yt)cur.el.currentTime+=5;
+  else if(k==="ArrowLeft"&&cur&&!cur.yt)cur.el.currentTime-=5;
+  else if(k==="ArrowUp"){S.vol=Math.min(1,S.vol+.05);$("#vol").value=S.vol;cur&&(cur.el.volume=tv())}
+  else if(k==="ArrowDown"){S.vol=Math.max(0,S.vol-.05);$("#vol").value=S.vol;cur&&(cur.el.volume=tv())}
+};
+
+/* ---------- live status + visualiser ---------- */
+const cv=$("#viz"),g=cv.getContext("2d");
+function state(){
+  if(loading)return "Loading";if(!cur)return "Stopped";
+  if(cur.yt){const k=yt.getPlayerState();return k===1?"Playing":k===2?"Paused":k===0?"Stopped":"Loading"}
+  return cur.el.paused?"Paused":"Playing";
+}
+function frame(t){
+  cv.width=cv.clientWidth;const W=cv.width,H=cv.height,st=state();
+  const c=$("#status");if(c.textContent!==st){c.textContent=st;c.className="chip "+st;$("#pp").textContent=st==="Playing"?"⏸":"▶"}
+  $("#tt").textContent=cur?cur.s.title:"Nothing playing";
+  $("#ts").textContent=cur?cur.s.cat+" · "+cur.s.ext:"Pick a song or a soundboard button";
+  let p=0,d=0;
+  if(cur){p=cur.yt?yt.getCurrentTime():cur.el.currentTime;d=cur.yt?yt.getDuration():cur.el.duration}
+  $("#tc").textContent=T(p);$("#td").textContent=T(d);
+  if(!drag&&d)sk.value=p/d*1000;if(!cur)sk.value=0;
+  g.clearRect(0,0,W,H);
+  const n=48,bw=W/n,data=new Uint8Array(64);
+  if(an&&cur&&!cur.yt)an.getByteFrequencyData(data);
+  const grad=g.createLinearGradient(0,0,W,0);grad.addColorStop(0,"#22d3ee");grad.addColorStop(1,"#a855f7");g.fillStyle=grad;
+  for(let i=0;i<n;i++){
+    let h=data[i]/255*H;
+    if(cur&&cur.yt&&st==="Playing")h=(Math.sin(t/180+i*.6)*.5+.5)*H*.7;
+    h=Math.max(3,h);g.fillRect(i*bw+1,H-h,bw-2,h);
+  }
+  requestAnimationFrame(frame);
+}
+render();requestAnimationFrame(frame);
