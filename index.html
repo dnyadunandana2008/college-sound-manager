@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>College Sound Manager</title>
+<title>College Sound Manager – DJ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
@@ -12,34 +12,48 @@
 <header>
   <h1>COLLEGE SOUND MANAGER</h1>
   <span id="status" class="chip">Stopped</span>
+  <button id="mute" title="Mute everything (M)">🔊</button>
+  <button id="ytShow">📺 Video</button>
   <button id="stopAll" class="panic">STOP ALL AUDIO</button>
 </header>
 
-<footer id="player" class="glass">
-  <div class="jog" id="jog" title="Drag left / right to scrub"><div class="disc" id="disc"><i>♪</i></div></div>
-  <div class="mid">
-    <div class="now"><b id="tt">Nothing playing</b><small id="ts">Pick a song or a soundboard button</small></div>
-    <canvas id="viz" height="90"></canvas>
-    <div class="seekrow"><span id="tc">–:––</span><input type="range" id="seek" min="0" max="1000" value="0"><span id="td">–:––</span></div>
-    <div class="ctl">
-      <button id="shuf" title="Shuffle">🔀</button>
-      <button id="prev" title="Previous">⏮</button>
-      <button id="pp" class="big" title="Play / Pause">▶</button>
-      <button id="stop" title="Stop with fade out">⏹</button>
-      <button id="nxt" title="Next">⏭</button>
-      <button id="rep" title="Repeat">🔁 Off</button>
-      <button id="mute" title="Mute">🔊</button>
-      <input type="range" id="vol" min="0" max="1" step="0.01" title="Volume">
-      <button id="ytShow">📺 Show video</button>
+<!-- Deck A | Mixer | Deck B  (filled by app.js) -->
+<div id="decks">
+  <section class="deck glass" id="deckA"></section>
+  <section class="mixer glass" id="mixer"></section>
+  <section class="deck glass" id="deckB"></section>
+</div>
+
+<details class="glass io" id="io">
+  <summary>Audio outputs (4-channel interface) and MIDI controller</summary>
+  <div class="iogrid">
+    <div>
+      <h3>Audio outputs</h3>
+      <button id="findOut">Find outputs</button>
+      <label>Main speakers output <select id="outM"><option value="">System default</option></select></label>
+      <label>Headphones output <select id="outH"><option value="">Off (no headphones)</option></select></label>
+      <small>Your 4-channel interface shows as two stereo outputs (1-2 and 3-4). Pick one for the speakers and the other for the headphones.</small>
     </div>
-    <div class="ctl">
-      <button class="cue" data-k="0">Cue 1</button><button class="cue" data-k="1">Cue 2</button><button class="cue" data-k="2">Cue 3</button><button class="cue" data-k="3">Cue 4</button>
-      <label>Tempo <input type="range" id="tempo" min="0.8" max="1.2" step="0.01" value="1"> <span id="tv">100%</span></label>
-      <label>Fade <input type="number" id="fade" min="0" max="10" step="0.5"> sec</label>
-      <label class="chk"><input type="checkbox" id="xf"> Crossfade</label>
+    <div>
+      <h3>USB-MIDI controller</h3>
+      <button id="midiBtn">Connect MIDI</button>
+      <small id="midiSt">Not connected</small>
+      <label class="chk"><input type="checkbox" id="learn"> MIDI learn (tap a control on screen, then move your hardware control)</label>
+      <button id="midiReset">Reset MIDI map</button>
+      <details>
+        <summary>Default MIDI numbers (channel 1)</summary>
+        <small>
+          Deck A notes: 36 Play, 37 Cue, 38-41 Hot cues, 42 Headphone cue, 43 Load.<br>
+          Deck B notes: 48 Play, 49 Cue, 50-53 Hot cues, 54 Headphone cue, 55 Load.<br>
+          Deck A knobs (CC): 1 Volume, 2 High, 3 Mid, 4 Low, 5 Tempo, 6 Jog.<br>
+          Deck B knobs (CC): 11 Volume, 12 High, 13 Mid, 14 Low, 15 Tempo, 16 Jog.<br>
+          Mixer (CC): 20 Crossfader, 21 Master, 22 Headphone volume, 23 Browse. Note 60 = Browse press.<br>
+          Jog and Browse are "turn" controls: 64 = no move, above 64 = forward, below 64 = back.
+        </small>
+      </details>
     </div>
   </div>
-</footer>
+</details>
 
 <main>
   <section class="glass">
@@ -52,7 +66,13 @@
   </section>
 
   <section class="glass">
-    <div class="bar"><h2>Music library</h2></div>
+    <div class="bar">
+      <h2>Music library</h2>
+      <button id="shuf" title="Shuffle">🔀</button>
+      <button id="rep" title="What happens when a song ends">🔁 Off</button>
+      <label class="chk"><input type="checkbox" id="xf"> Auto-fade</label>
+      <label class="chk">Fade <input type="number" id="fade" min="0" max="10" step="0.5"> sec</label>
+    </div>
     <div class="add">
       <label class="btn">Upload songs<input type="file" id="files" accept="audio/*" multiple hidden></label>
       <input id="ytUrl" placeholder="YouTube link">
